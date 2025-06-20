@@ -37,8 +37,8 @@ class TaskListc:
         self.com_task_W = np.diag([10]*3)
         self.com_task_qobj = np.array([0.02,0,0.6])
         self.com_task_vobj = np.array([0,0,0])
-        self.com_SM = np.identity(model.nv)
         self.com_vonly = False
+        self.com_task_aobj = np.zeros(3)
 
         self.angular_momenta_flag = 0
         self.hgW = np.diag([10]*3)
@@ -84,8 +84,14 @@ class TaskListc:
         self.lc_flag = 0
         self.right_foot_pos_target = None
         self.left_foot_pos_target = None
+        self.right_foot_vel_target = None
+        self.left_foot_vel_target = None
+        self.right_foot_acc_target = None
+        self.left_foot_acc_target = None
+
 
         self.com = np.zeros(3)
+        self.vcom = np.zeros(3)
         self.miu = 0.7
         
     # def setCPNJ(self,cN):
@@ -219,6 +225,30 @@ class TaskListc:
     
         return fixed_body_Jdv
     
+    def getJbodydotqdot(self, body_id_list, dt=1e-6):
+        mujoco.mj_fwdPosition(self.model, self.data)
+        J_fixed = self.get_body_list_jac(body_id_list)
+
+        qpos0 = self.data.qpos.copy()
+        qvel0 = self.data.qvel.copy()
+
+        qpos_next = qpos0.copy()
+        mujoco.mj_integratePos(self.model, qpos_next, qvel0, dt)
+        self.data.qpos[:] = qpos_next
+        mujoco.mj_fwdPosition(self.model, self.data)
+        
+        J_fixed_next = self.get_body_list_jac(body_id_list)
+        
+        self.data.qpos[:] = qpos0
+        self.data.qvel[:] = qvel0
+        mujoco.mj_fwdPosition(self.model, self.data)
+        
+        J_dot = (J_fixed_next - J_fixed) / dt
+        
+        fixed_body_Jdv = J_dot @ self.data.qvel
+    
+        return fixed_body_Jdv
+    
     def clamp(self,q,l,u):
         if q < l:
             q = l
@@ -288,7 +318,7 @@ class TaskListc:
         self.com = data.subtree_com[1]
         J_com = np.zeros((3, self.model.nv))
         mujoco.mj_jacSubtreeCom(self.model, self.data, J_com, 0)
-        vcom = J_com@self.qdot
+        self.vcom = J_com@self.qdot
         J_am = np.zeros((3, self.model.nv))
         mujoco.mj_angmomMat(self.model, self.data, J_am, 0)
         # vh = J_am @ self.data.qvel
@@ -315,7 +345,7 @@ class TaskListc:
         #     fixed_body_velocity[6*i:6*(i+1)] = fixed_body_oJ@self.qdot
         fixed_body_oJ = self.get_body_list_jac(self.fixed_body_id_list)
         fixed_body_velocity = fixed_body_oJ@self.qdot
-        fixed_body_Jdv = self.getJfixeddotqdot()
+        fixed_body_Jdv = self.getJbodydotqdot(self.fixed_body_id_list)#self.getJfixeddotqdot()
         self.vertex_point_site_num = len(self.vertex_point_site_list)
         vertex_point_site_jac = np.zeros((3*self.vertex_point_site_num, model.nv))
         for i in range(self.vertex_point_site_num):
@@ -337,7 +367,7 @@ class TaskListc:
             Jcomdotqdot = self.getJcomdotqdot()
             com = self.com
             vcom = Jcom@self.qdot
-            task_a = -160*(com - self.com_task_qobj) - 25*(vcom - self.com_task_vobj) #110,25;100,25
+            task_a = self.com_task_aobj - 160*(com - self.com_task_qobj) - 25*(vcom - self.com_task_vobj) #110,25;100,25
             if self.com_vonly:
                 task_a = - 25*(vcom - self.com_task_vobj)
             if task_a[2] < -8.0:
@@ -348,7 +378,7 @@ class TaskListc:
             qqdd += -Jcomf.T@self.com_task_W@(task_a-Jcomdotqdot)
         if self.angular_momenta_flag != 0:
             Jhg = J_am
-            Jhg = data.Ag[3:,:]
+            # Jhg = data.Ag[3:,:]
             Jhgf = np.block([Jhg, np.zeros((3,3*self.vertex_point_site_num))])
             Jhdotqdot = self.getJhdotqdot()
             hg = Jhg@self.qdot
@@ -400,6 +430,7 @@ class TaskListc:
             qqdd += -(Jjzs.T)@self.jzs_W@task_jzsq
 
         if self.trl[0] == 0:
+            rfjdv = self.getJbodydotqdot([model.body('link3').id])
             idrf = model.body('link3').id
             tool_nu = np.zeros(6)
             tool_nu[:3] = self.right_foot_pos_target - data.body(idrf).xpos
@@ -409,14 +440,18 @@ class TaskListc:
             mujoco.mju_mulQuat(rf_error_quat, np.array([1,0,0,0]), rf_neg_quat)
             mujoco.mju_quat2Vel(tool_nu[3:], rf_error_quat, 1.0)
             Jrf = np.zeros((6, model.nv))
-            mujoco.mj_jacSite(model, data, Jrf[:3], Jrf[3:], idrf)
+            mujoco.mj_jacBody(model, data, Jrf[:3], Jrf[3:], idrf)
             tool_v = Jrf@self.qdot
-            task_rca = (tool_nu/0.05 - tool_v)*50#(tool_nu/self.dt - tool_v)*3#/self.dt #150*(tool_nu) - 20*tool_v
-            rcW = 1*np.identity(6) #0.1
+            # task_rca = (tool_nu/0.05 - tool_v)*50#(tool_nu/self.dt - tool_v)*3#/self.dt #150*(tool_nu) - 20*tool_v
+            task_rca = np.zeros(6)
+            task_rca[:3] = self.right_foot_acc_target + 150*(tool_nu[:3]) - 18*(tool_v[:3] - self.right_foot_vel_target)
+            task_rca[3:] = 150*(tool_nu[3:]) - 18*(tool_v[3:])
+            rcW = 10*np.identity(6) #0.1
             # rcW[2,2] = 0
             Pqdd[:self.nv,:self.nv] += Jrf.T@rcW@Jrf
-            qqdd[:self.nv]+= -(Jrf.T)@rcW@(task_rca)
+            qqdd[:self.nv]+= -(Jrf.T)@rcW@(task_rca - rfjdv)
         if self.trl[1] == 0:
+            lfjdv = self.getJbodydotqdot([model.body('link6').id])
             idlf = model.body('link6').id
             tool_nu = np.zeros(6)
             tool_nu[:3] = self.left_foot_pos_target - data.body(idlf).xpos
@@ -426,13 +461,16 @@ class TaskListc:
             mujoco.mju_mulQuat(lf_error_quat, np.array([1,0,0,0]), lf_neg_quat)
             mujoco.mju_quat2Vel(tool_nu[3:], lf_error_quat, 1.0)
             Jlf = np.zeros((6, model.nv))
-            mujoco.mj_jacSite(model, data, Jlf[:3], Jlf[3:], idlf)
+            mujoco.mj_jacBody(model, data, Jlf[:3], Jlf[3:], idlf)
             tool_v = Jlf@self.qdot
-            task_lca = (tool_nu/0.05 - tool_v)*50#(tool_nu/self.dt - tool_v)*3#/self.dt #150*(tool_nu) - 20*tool_v
-            lcW = 1*np.identity(6) #0.1
+            # task_lca = (tool_nu/0.05 - tool_v)*50#(tool_nu/self.dt - tool_v)*3#/self.dt #150*(tool_nu) - 20*tool_v
+            task_lca = np.zeros(6)
+            task_lca[:3] = self.left_foot_acc_target + 150*(tool_nu[:3]) - 18*(tool_v[:3] - self.left_foot_vel_target)
+            task_lca[3:] = 150*(tool_nu[3:]) - 18*(tool_v[3:])
+            lcW = 10*np.identity(6) #0.1
             # lcW[2,2] = 0
             Pqdd[:self.nv,:self.nv] += Jlf.T@lcW@Jlf
-            qqdd[:self.nv] += -(Jlf.T)@lcW@(task_lca)
+            qqdd[:self.nv] += -(Jlf.T)@lcW@(task_lca - lfjdv)
 
         P  = Pqdd + 0.001*np.identity(self.nv+3*self.vertex_point_site_num)
         oq = qqdd

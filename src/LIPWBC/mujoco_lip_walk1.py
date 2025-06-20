@@ -8,7 +8,7 @@ import matplotlib.pylab as plt; plt.ion()
 import mujoco
 import mujoco.viewer
 from mujoco_wbc1 import TaskListc
-from mpp2tfcls1 import ContactSchedule
+from mujoco_lip_traj1 import ContactSchedule
 
 modelfilename = 'test4.xml'
 m = mujoco.MjModel.from_xml_path(modelfilename)
@@ -22,10 +22,10 @@ t1 = TaskListc(model)
 t1.dt = 0.005
 
 t1.setStates(data.qpos,data.qvel)
-print('*******************contact*********************')
+# print('*******************contact*********************')
 t1.fixed_body_list = ['link3','link6']
 t1.vertex_point_site_list = ['t{}'.format(i) for i in range(1, 9)]
-print('*******************task*********************')
+# print('*******************task*********************')
 t1.sm1(0,0)
 t1.tsid()
 ##################
@@ -49,7 +49,7 @@ t1.jW = np.diag([10]*t1.jN)
 landingtime = 0
 cs1 = ContactSchedule()
 
-def mycontroller(t1,d):
+def mycontroller(t1,m,d):
     # fs = t1.fs
     # t1.setCPNL(clist)
     t1.setStates(d.qpos,d.qvel)
@@ -96,49 +96,66 @@ def mycontroller(t1,d):
     #     t1.com_task_W = np.diag([10,10,10])
     #     t1.com_task_qobj = np.array([0.065,0,0.7+0.1*np.sin(6*(d.time - 1.5))])
     #     t1.com_task_vobj = np.array([0,0,0.6*np.cos(6*(d.time - 1.5))])
-    if d.time >= 100.0 and fs == 0:
+    if d.time >= 1.0 and fs == 0:
         rf1 = np.array([0.06,-0.15,0])
         lf1 = np.array([0.06,0.15,0])
-        cs1.pushDST(0.4,np.array([0.0,0.0,0]))
-        cs1.pushDS2SSOnL(rf1,lf1)
-        cs1.printInfo()
-        com,vcom = t1.getCoM()
+        rf2 = np.array([0.46,-0.15,0])
+        lf2 = np.array([0.46,0.15,0])
+        com = data.subtree_com[1]
+        J_com = np.zeros((3, m.nv))
+        mujoco.mj_jacSubtreeCom(m, d, J_com, 0)
+        vcom = J_com@d.qvel
+        # cs1.pushDST(rf1,lf1,np.array([0.0,0.0,0]),0.8)
+        cs1.dt = 0.005
+        cs1.pushDST(rf1,lf1,np.array([com[0],com[1],0]),0.8)
+        cs1.pushDS(rf1,lf1,0.3)
+        cs1.pushSSOnR(rf1,lf2,0.5)
+        # cs1.pushDS(rf1,lf1,0.3)
+        cs1.pushDS(rf1,lf2,0.2)
+        cs1.pushSSOnL(rf2,lf2,0.5)
+        cs1.pushDS(rf2,lf2)
+        cs1.N = int(cs1.finaltime/cs1.dt)
+
+        # cs1.pushDST(0.4,np.array([0.0,0.0,0]))
+        # cs1.pushDS2SSOnL(rf1,lf1)
+        # cs1.printInfo()
+        # com,vcom = t1.getCoM()
         cx = np.array([com[0],vcom[0]])
         cy = np.array([com[1],vcom[1]])
-        cs1.getTraj(d.time-1,cx,cy)
+        # final_cx = np.array([((rf1+lf1)/2)[0],0.0])
+        # final_cy = np.array([((rf1+lf1)/2)[1],0.0])
+        final_cx = np.array([((rf2+lf2)/2)[0],0.0])
+        final_cy = np.array([((rf2+lf2)/2)[1],0.0])
+        # cs1.getTraj(d.time-1,cx,cy)
+        cs1.getTraj(0,cx,cy,final_cx,final_cy)
+        cs1.getSwingTraj()
+        # cs1.printSwingSch()
+
         t1.ret()
         jlist = [18,19]#,9,15,13] # wrist can do better
         qobj = [0,0]#,0.4,0.4,0.2]
         t1.setJST(jlist,qobj)
         t1.jW = np.diag([0.01]*2)#+[1]*3)
         # COM
-        t1.com_task_flag = 0
-        t1.com_force_task_flag = 1
+        t1.com_task_flag = 1
         t1.com_task_W = np.diag([10,10,10]) #50,10,10
         t1.com_task_qobj = np.array([0.115,0.0,0.6]) #0.5/0.4
         t1.com_task_vobj = np.array([0,0,0])
         t1.com_vonly = False
-        t1.Wclf = np.diag([0.1,0.1,0.1]) #0.5
         # 角动量
-        t1.angular_momenta_flag = 0
-        t1.com_torque_task_flag = 1
+        t1.angular_momenta_flag = 1
         t1.hgW = np.diag([5]*3) #15
         t1.kdhg = 65
         t1.hg_obj = np.array([-0.0,0.0,0]) #0.6
-        t1.Wcrt = np.diag([5]*3) #15
         # 上身直立
         t1.fr_flag = 1
-        t1.fr_W = np.diag([5]*3) #5;15
+        t1.fr_W = np.diag([0.5]*3) #5;15
         # 节能
         t1.es_flag = 1
         t1.Wtau = np.diag([0.001]*(t1.nv-6)) #0.0004
         # 不动
         t1.jzs_flag = 0
         t1.jzs_W = 0.01*np.identity(t1.nv-6)
-        # contact stab
-        t1.stablize_contact_flag = 0
-        t1.Wsc = 1*np.identity(8)
-        t1.rc_flag = 0
         ###########################################
         print('time:',d.time,'fs_state_transition:0->1')
         fs = 1
@@ -146,14 +163,47 @@ def mycontroller(t1,d):
     if fs == 0:
         pass
     elif fs == 1:
-        ind = int((d.time-1)/0.01)
-        if ind > 199:
-            ind = 199
-        t1.com_task_qobj = np.array([cs1.cx[0,ind],cs1.cy[0,ind],1]) #0.5/0.4
-        t1.com_task_vobj = np.array([cs1.cx[1,ind],cs1.cy[1,ind],0])
+        # ind = int((d.time-1)/0.01)
+        # if ind > 199:
+        #     ind = 199
+        # t1.com_task_qobj = np.array([cs1.cx[0,ind],cs1.cy[0,ind],1]) #0.5/0.4
+        # t1.com_task_vobj = np.array([cs1.cx[1,ind],cs1.cy[1,ind],0])
         # print(t1.com_task_qobj)
-        t1.fixed_body_list = ['link3','link6']
-        t1.vertex_point_site_list = ['t{}'.format(i) for i in range(1, 9)]
+
+        lf_state,rf_state,lf_swing_traj_point, rf_swing_traj_point = cs1.get_swing_traj_point(d.time-1)
+        com_task_aobj, com_task_vobj, com_task_qobj = cs1.get_com_traj_point(d.time-1)
+        t1.com_task_qobj = com_task_qobj
+        t1.com_task_vobj = com_task_vobj
+        t1.com_task_aobj = com_task_aobj
+        t1.fixed_body_list = []
+        t1.vertex_point_site_list = []
+        if rf_state == 'fixed':
+            t1.trl[0] = 1
+            t1.fixed_body_list.append('link3')
+            t1.vertex_point_site_list += ['t{}'.format(i) for i in range(1, 5)]
+        else:
+            t1.trl[0] = 0
+            t1.right_foot_pos_target = rf_swing_traj_point[0]
+            # t1.right_foot_pos_target[0] -= 0.06
+            t1.right_foot_pos_target[2] += 0.011
+            t1.right_foot_vel_target = rf_swing_traj_point[1]
+            t1.right_foot_acc_target = rf_swing_traj_point[2]
+            
+        if lf_state == 'fixed':
+            t1.trl[1] = 1
+            t1.fixed_body_list.append('link6')
+            t1.vertex_point_site_list += ['t{}'.format(i) for i in range(5, 9)]
+        # t1.fixed_body_list = ['link3','link6']
+        # t1.vertex_point_site_list = ['t{}'.format(i) for i in range(1, 9)]
+        else:
+            t1.trl[1] = 0
+            t1.left_foot_pos_target = lf_swing_traj_point[0]
+            # t1.left_foot_pos_target[0] -= 0.06
+            t1.left_foot_pos_target[2] += 0.011
+            t1.left_foot_vel_target = lf_swing_traj_point[1]
+            t1.left_foot_acc_target = lf_swing_traj_point[2]
+        # t1.fixed_body_list = ['link3','link6']
+        # t1.vertex_point_site_list = ['t{}'.format(i) for i in range(1, 9)]
         pass
     elif fs == 2:
         pass
@@ -198,7 +248,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
         t1.concou[i] += d.sensordata[i]
 
     if ii % 5 == 0:
-        mycontroller(t1,d)
+        mycontroller(t1,m,d)
     ii += 1
     # mj_step can be replaced with code that also evaluates
     # a policy and applies a control signal before stepping the physics.
@@ -216,8 +266,8 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
     mrec[8].append(d.qpos[12])
 
     # Example modification of a viewer option: toggle contact points every two seconds.
-    with viewer.lock():
-      viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = int(d.time % 2)
+    # with viewer.lock():
+    #   viewer.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = int(d.time % 2)
 
     # Pick up changes to the physics state, apply perturbations, update options from GUI.
     viewer.sync()
@@ -227,13 +277,16 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
     if time_until_next_step > 0:
       time.sleep(time_until_next_step)
 
-endp = 8000
+endp = 18000
 plt.figure(1)
 plt.subplot(311)
-plt.plot(mrec[1][:endp])
+plt.plot(mrec[1][1000:endp:5])
+plt.plot(cs1.cx[0,:])
 plt.subplot(312)
-plt.plot(mrec[3][:endp])
+plt.plot(mrec[3][1000:endp:5])
+plt.plot(cs1.cy[0,:])
 # plt.plot(mrecord4)
 plt.subplot(313)
-plt.plot(mrec[2][:endp])
+plt.plot(mrec[2][1000:endp:5])
 plt.show()
+# input()
