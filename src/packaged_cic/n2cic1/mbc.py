@@ -20,8 +20,8 @@ class MBC:
         # 初始化机器人速度为零
         self.qdot = np.zeros(self.model.nv)
         # 构建传感器名称列表，左右两边的传感器名称拼接
-        self.fclist = ['{}_sensor_{}{}'.format('l', i, j) for i in range(1, 4) for j in range(1, 5)] + \
-                      ['{}_sensor_{}{}'.format('r', i, j) for i in range(1, 4) for j in range(1, 5)]
+        self.fclist = ['{}_sensor_{}{}'.format('l', 1, j) for j in range(1, 5)] + \
+                      ['{}_sensor_{}{}'.format('r', 1, j) for j in range(1, 5)]
         # 初始化接触列表为空
         self.clist = []
         # 获取传感器数量
@@ -76,6 +76,12 @@ class MBC:
         self.lramp = 0.2
         self.hipzl = 0.0 
         self.hipzr = 0.0
+        
+        self.rhip_rotationN = 0
+        self.rhip_rotationobj = None
+        self.lhip_rotationN = 0
+        self.lhip_rotationobj = None
+
 
     def getDK(self):
         model = self.model
@@ -89,10 +95,10 @@ class MBC:
         self.com = com
         self.Jcom = pin.jacobianCenterOfMass(model,data,self.q,False)
         self.vcom = self.Jcom@self.qdot
-        rfid = model.getFrameId('r_leg_ankle_pitch_Link')
-        lfid = model.getFrameId('l_leg_ankle_pitch_Link')
-        rhid = model.getFrameId('r_leg_hip_roll_Link')
-        lhid = model.getFrameId('l_leg_hip_roll_Link')
+        rfid = model.getFrameId('R_leg_ankle_link')
+        lfid = model.getFrameId('L_leg_ankle_link')
+        rhid = model.getFrameId('R_leg_hip_pitch_link')
+        lhid = model.getFrameId('L_leg_hip_pitch_link')
         self.rfpos = data.oMf[rfid].translation
         self.lfpos = data.oMf[lfid].translation
         self.rhip = data.oMf[rhid].translation
@@ -174,7 +180,21 @@ class MBC:
                 task_aja = self.aqobj
                 Pqdd += aJj.T@self.ajW@aJj
                 qqdd += -(aJj.T)@self.ajW@task_aja
-            
+            if self.rhip_rotationobj != None:
+                idbase = model.getFrameId('base_link')
+                oMbase = data.oMf[idbase]
+                idrleg = model.getFrameId('R_leg_hip_pitch_link')
+                oMgoal = pin.SE3(pin.Quaternion(*self.hip_rotationobj).normalized().matrix(), np.zeros(3))
+                oMtool = data.oMf[idrleg]
+                tool_nu = pin.log((oMbase.inverse()*oMtool).inverse()*oMgoal).angular
+                tool_Jtool = np.zeros((3,model.nv+3*self.cN))
+                tool_Jtool[:,19:22] = pin.computeFrameJacobian(model, data, q, idrleg)[3:,19:22]
+                rlegvel = tool_Jtool@self.qdot
+                # hJj = np.zeros((self.hip_rotationN,model.nv+3*self.cN))
+                task_hja = self.kpj*tool_nu - self.kdj*rlegvel
+                Pqdd += tool_Jtool.T@self.hip_rotationW@tool_Jtool
+                qqdd += -(tool_Jtool.T)@self.hip_rotationW@task_hja
+                
             QPP  = Pqdd + 0.0001*np.identity(model.nv+3*self.cN)
             QPq = qqdd
             A = np.block([[self.M[:6,:],-self.o_Jtool.T[:6,:]],[self.o_Jtool,0.001*np.identity(3*self.cN)]])
@@ -312,11 +332,13 @@ def walk_controller(mbc: MBC, ppos, qvel, concou, time=0):
     # [hip pitch, hip yaw, hip roll, knee, ankle pitch, ankle roll] for left and right legs
     mbc.jlist = [
         6, 7, 8, 9, 10, 11,
-        12, 13, 14, 15, 16, 17,
+        22,23
     ]
     mbc.qobj = [
         output, hipzl, hipyol, kneel, apitl, 0,
-        output, hipzr, hipyor, kneer, apitr, 0,
+        kneer, apitr
     ]
+    
+    mbc.rhip_rotationobj = []
     # return np.array(mbc.qobj) * 180 / np.pi
     return mbc.tsid()

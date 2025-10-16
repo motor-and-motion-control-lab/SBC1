@@ -12,7 +12,9 @@ sensor_pos:
   - [-0.02, -0.04, -0.05]
   - [-0.05, -0.03, -0.05]
 
-mjcf_folder: "/home/mmlab/codes/sensorimotor-rl/model/mjcf"
+mjcf_folder: "/home/mmlab-rl/codes/SBC1/model/n2/mjcf"
+model_folder: "/home/mmlab-rl/codes/SBC1/model/n2"
+mesh_folder: "/home/mmlab-rl/codes/SBC1/model/n2/mesh"
 
 duration: 45.0
 timestep: 0.01

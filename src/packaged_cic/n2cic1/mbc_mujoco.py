@@ -6,7 +6,7 @@ from mbc import MBC, walk_controller
 import os
 from rich import print
 import yaml
-from sim_recorder import SimRecorder
+# from sim_recorder import SimRecorder
 import matplotlib.pyplot as plt
 
 
@@ -16,13 +16,13 @@ with open(os.path.join(os.path.dirname(__file__), "config.yaml"), "r") as f:
 
 mjcf_folder = config['mjcf_folder']
 
-modelfilename = os.path.join(mjcf_folder, "dora2_stand_fix.xml")
-modelfilename_pin = os.path.join(mjcf_folder, "dora2_stand_fix_pin.xml")
+modelfilename = os.path.join(mjcf_folder, "N2_contactsite1.xml")
+modelfilename_pin = os.path.join(mjcf_folder, "N2_contactsite1_pin.xml")
 
 m = mujoco.MjModel.from_xml_path(modelfilename)
 d = mujoco.MjData(m)
 c1 = MBC(modelfilename_pin)
-simRecorder = SimRecorder(m, d)
+# simRecorder = SimRecorder(m, d)
 
 end_time = 50
 
@@ -132,7 +132,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
         # c1.anklebias =  -0.03
 
         d.ctrl[:] = walk_controller(c1, ppos, d.qvel, concou, time=d.time)
-        simRecorder.update(concou)
+        # simRecorder.update(concou)
         mujoco.mj_step(m, d)
 
         viewer.sync()
@@ -141,11 +141,11 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
             time.sleep(time_until_next_step)
 
 final_pos = d.qpos[0].copy()
-simRecorder.record_vel_command(final_pos, d.time)
+# simRecorder.record_vel_command(final_pos, d.time)
 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-simRecorder.save_to_json_file(os.path.join(script_dir, "forward_fast.json"))
+# simRecorder.save_to_json_file(os.path.join(script_dir, "forward_fast.json"))
 # print(mvcomhist)
 def mv_average(data, window_size):
     kernel = np.ones(window_size) / window_size

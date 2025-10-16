@@ -1,4 +1,3 @@
 model/
-test/
 MUJOCO_LOG.TXT
 src/LIPWBC/__pycache__
